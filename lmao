@@ -1,0 +1,760 @@
+-- LocalScript: StarterPlayer > StarterPlayerScripts
+-- MineBot — fixed Team Check
+
+local Players          = game:GetService("Players")
+local RunService       = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local GuiService       = game:GetService("GuiService")
+local TweenService     = game:GetService("TweenService")
+
+local LocalPlayer = Players.LocalPlayer
+
+----------------------------------------------------------------
+-- SETTINGS
+----------------------------------------------------------------
+local Settings = {
+	Enabled      = true,
+	TeamCheck    = true,
+	WallCheck    = true,
+	MiddleToggle = true,
+	Strength     = 1,
+	Smoothness   = 0.1,
+	FovRadius    = 280,
+	MaxDistance  = 1000,
+}
+
+local GUI_VISIBLE    = true
+local LastTargetName = "none"
+local CamModeName    = "rebuild"
+local AimToggled     = false
+
+local TWEEN_FAST = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+
+----------------------------------------------------------------
+-- GUI (same as before)
+----------------------------------------------------------------
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "MineBot"
+screenGui.ResetOnSpawn = false
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = "Main"
+mainFrame.Size = UDim2.fromOffset(272, 430)
+mainFrame.Position = UDim2.new(0.04, 0, 0.18, 0)
+mainFrame.BackgroundColor3 = Color3.fromRGB(11, 13, 17)
+mainFrame.BorderSizePixel = 0
+mainFrame.Visible = GUI_VISIBLE
+mainFrame.Parent = screenGui
+Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 12)
+
+local stroke = Instance.new("UIStroke")
+stroke.Color = Color3.fromRGB(0, 255, 140)
+stroke.Thickness = 1.4
+stroke.Transparency = 0.45
+stroke.Parent = mainFrame
+
+local titleBar = Instance.new("Frame")
+titleBar.Size = UDim2.new(1, 0, 0, 40)
+titleBar.BackgroundColor3 = Color3.fromRGB(16, 19, 25)
+titleBar.BorderSizePixel = 0
+titleBar.Parent = mainFrame
+Instance.new("UICorner", titleBar).CornerRadius = UDim.new(0, 12)
+
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Size = UDim2.new(1, -50, 1, 0)
+titleLabel.Position = UDim2.fromOffset(14, 0)
+titleLabel.BackgroundTransparency = 1
+titleLabel.Text = "MINEBOT  ·  v2.5"
+titleLabel.TextColor3 = Color3.fromRGB(0, 255, 140)
+titleLabel.TextSize = 15
+titleLabel.Font = Enum.Font.Code
+titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+titleLabel.Parent = titleBar
+
+local dot = Instance.new("Frame")
+dot.Size = UDim2.fromOffset(9, 9)
+dot.Position = UDim2.new(1, -22, 0.5, -4.5)
+dot.BackgroundColor3 = Color3.fromRGB(0, 255, 140)
+dot.BorderSizePixel = 0
+dot.Parent = titleBar
+Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
+
+do
+	local dragging, dragStart, startPos = false, nil, nil
+	titleBar.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = true
+			dragStart = input.Position
+			startPos = mainFrame.Position
+		end
+	end)
+	UserInputService.InputChanged:Connect(function(input)
+		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+			local delta = input.Position - dragStart
+			mainFrame.Position = UDim2.new(
+				startPos.X.Scale, startPos.X.Offset + delta.X,
+				startPos.Y.Scale, startPos.Y.Offset + delta.Y
+			)
+		end
+	end)
+	UserInputService.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = false
+		end
+	end)
+end
+
+local ON_COLOR  = Color3.fromRGB(0, 200, 110)
+local OFF_COLOR = Color3.fromRGB(55, 22, 28)
+local ACCENT    = Color3.fromRGB(0, 255, 140)
+
+local function makeToggle(text, y, key)
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(0.9, 0, 0, 30)
+	btn.Position = UDim2.new(0.05, 0, 0, y)
+	btn.TextColor3 = Color3.fromRGB(240, 255, 245)
+	btn.TextSize = 13
+	btn.Font = Enum.Font.GothamBold
+	btn.AutoButtonColor = false
+	btn.Parent = mainFrame
+	Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 7)
+
+	local function refresh(animated)
+		local on = Settings[key]
+		btn.Text = text .. "  ·  " .. (on and "ON" or "OFF")
+		local targetColor = on and ON_COLOR or OFF_COLOR
+		if animated then
+			TweenService:Create(btn, TWEEN_FAST, {BackgroundColor3 = targetColor}):Play()
+		else
+			btn.BackgroundColor3 = targetColor
+		end
+	end
+	refresh(false)
+
+	btn.MouseButton1Click:Connect(function()
+		Settings[key] = not Settings[key]
+		refresh(true)
+	end)
+end
+
+local function makeSlider(text, y, key, minV, maxV, step, decimals)
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.new(0.9, 0, 0, 18)
+	label.Position = UDim2.new(0.05, 0, 0, y)
+	label.BackgroundTransparency = 1
+	label.TextColor3 = Color3.fromRGB(180, 200, 190)
+	label.TextSize = 12
+	label.Font = Enum.Font.Gotham
+	label.TextXAlignment = Enum.TextXAlignment.Left
+	label.Parent = mainFrame
+
+	local track = Instance.new("Frame")
+	track.Size = UDim2.new(0.9, 0, 0, 8)
+	track.Position = UDim2.new(0.05, 0, 0, y + 22)
+	track.BackgroundColor3 = Color3.fromRGB(28, 32, 40)
+	track.BorderSizePixel = 0
+	track.Parent = mainFrame
+	Instance.new("UICorner", track).CornerRadius = UDim.new(1, 0)
+
+	local fill = Instance.new("Frame")
+	fill.BackgroundColor3 = ACCENT
+	fill.BorderSizePixel = 0
+	fill.Size = UDim2.new(0, 0, 1, 0)
+	fill.Parent = track
+	Instance.new("UICorner", fill).CornerRadius = UDim.new(1, 0)
+
+	local function render(animated)
+		local v = Settings[key]
+		local rel = math.clamp((v - minV) / (maxV - minV), 0, 1)
+		label.Text = string.format("%s  ·  %." .. decimals .. "f", text, v)
+		if animated then
+			TweenService:Create(fill, TWEEN_FAST, {Size = UDim2.new(rel, 0, 1, 0)}):Play()
+		else
+			fill.Size = UDim2.new(rel, 0, 1, 0)
+		end
+	end
+	render(false)
+
+	local function setFromX(x, animated)
+		local rel = math.clamp((x - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
+		local v = minV + rel * (maxV - minV)
+		v = math.floor(v / step + 0.5) * step
+		Settings[key] = math.clamp(v, minV, maxV)
+		render(animated)
+	end
+
+	local dragging = false
+	track.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = true
+			setFromX(input.Position.X, true)
+		end
+	end)
+	UserInputService.InputChanged:Connect(function(input)
+		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+			setFromX(input.Position.X, false)
+		end
+	end)
+	UserInputService.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = false
+		end
+	end)
+end
+
+makeToggle("Assist",              52,  "Enabled")
+makeToggle("Team Check",          88,  "TeamCheck")
+makeToggle("Wall Check",         124,  "WallCheck")
+makeToggle("Middle Mouse Toggle", 160, "MiddleToggle")
+
+makeSlider("Strength",            204, "Strength",    0,   1,    0.01, 2)
+makeSlider("Smoothness",          250, "Smoothness",  0,   0.95, 0.01, 2)
+makeSlider("FOV Radius (px)",     296, "FovRadius",   50,  600,  5,    0)
+makeSlider("Max Distance",        342, "MaxDistance", 25, 1000,  5,    0)
+
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Size = UDim2.new(0.9, 0, 0, 22)
+statusLabel.Position = UDim2.new(0.05, 0, 0, 392)
+statusLabel.BackgroundTransparency = 1
+statusLabel.TextSize = 13
+statusLabel.Font = Enum.Font.Code
+statusLabel.TextXAlignment = Enum.TextXAlignment.Left
+statusLabel.Parent = mainFrame
+
+local function refreshStatus()
+	local active = Settings.Enabled and (not Settings.MiddleToggle or AimToggled)
+	if active then
+		statusLabel.Text = "● ACTIVE  |  " .. LastTargetName .. "  |  " .. CamModeName
+		statusLabel.TextColor3 = ACCENT
+		dot.BackgroundColor3 = ACCENT
+	else
+		statusLabel.Text = Settings.MiddleToggle and "○ INACTIVE  (middle click)" or "○ DISABLED"
+		statusLabel.TextColor3 = Color3.fromRGB(200, 80, 90)
+		dot.BackgroundColor3 = Color3.fromRGB(200, 80, 90)
+	end
+end
+refreshStatus()
+RunService.Heartbeat:Connect(refreshStatus)
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+	if gameProcessed then return end
+	if input.KeyCode == Enum.KeyCode.K then
+		GUI_VISIBLE = not GUI_VISIBLE
+		mainFrame.Visible = GUI_VISIBLE
+	end
+end)
+
+UserInputService.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton3 then
+		AimToggled = not AimToggled
+	end
+end)
+
+----------------------------------------------------------------
+-- FIXED TEAM CHECK
+----------------------------------------------------------------
+local function isTeammate(player)
+	if player == LocalPlayer then return true end
+
+	-- 1. Official Team object
+	if LocalPlayer.Team and player.Team and LocalPlayer.Team == player.Team then
+		return true
+	end
+
+	-- 2. TeamColor (very common in FPS games)
+	if LocalPlayer.TeamColor and player.TeamColor 
+		and LocalPlayer.TeamColor ~= BrickColor.new("White")
+		and LocalPlayer.TeamColor == player.TeamColor then
+		return true
+	end
+
+	-- 3. Neutral check – if both are neutral we treat them as NOT teammates
+	--    (so you can still shoot neutrals in FFA)
+	return false
+end
+
+----------------------------------------------------------------
+-- TARGETING
+----------------------------------------------------------------
+local rayParams = RaycastParams.new()
+rayParams.FilterType = Enum.RaycastFilterType.Exclude
+rayParams.RespectCanCollide = true
+rayParams.IgnoreWater = true
+
+local visCache = setmetatable({}, { __mode = "k" })
+local VIS_GRACE = 0.25
+
+local function isVisible(camera, part)
+	local filter = { camera }
+	for _, p in ipairs(Players:GetPlayers()) do
+		if p.Character then table.insert(filter, p.Character) end
+	end
+	rayParams.FilterDescendantsInstances = filter
+
+	local origin = camera.CFrame.Position
+	local result = workspace:Raycast(origin, part.Position - origin, rayParams)
+	local now = os.clock()
+	if result == nil then
+		visCache[part] = now
+		return true
+	end
+	local seen = visCache[part]
+	return seen ~= nil and (now - seen) < VIS_GRACE
+end
+
+local lockedPart, lockedAt = nil, 0
+local STICK_BONUS = 0.55
+local SWITCH_HOLD = 0.35
+
+local function getBestTarget(camera)
+	local now = os.clock()
+	local best, bestDist = nil, Settings.FovRadius
+	local mousePos = UserInputService:GetMouseLocation() - GuiService:GetGuiInset()
+	local camPos = camera.CFrame.Position
+
+	for _, player in ipairs(Players:GetPlayers()) do
+		-- FIXED: only skip if TeamCheck is ON and they are a teammate
+		if player ~= LocalPlayer and not (Settings.TeamCheck and isTeammate(player)) then
+			local char = player.Character
+			local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+			local head = char and char:FindFirstChild("Head")
+			local root = char and char:FindFirstChild("HumanoidRootPart")
+
+			if humanoid and humanoid.Health > 0 and (head or root) then
+				local order = { head, root }
+				if lockedPart and lockedPart.Parent == char and (now - lockedAt) < SWITCH_HOLD then
+					order = { lockedPart }
+				end
+
+				for _, part in ipairs(order) do
+					if part and (part.Position - camPos).Magnitude <= Settings.MaxDistance then
+						local screenPos, onScreen = camera:WorldToViewportPoint(part.Position)
+						if onScreen then
+							local d = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
+							if lockedPart and part.Parent == lockedPart.Parent then
+								d *= STICK_BONUS
+							end
+							if d < bestDist then
+								if not Settings.WallCheck or isVisible(camera, part) then
+									bestDist = d
+									best = part
+									break
+								end
+							else
+								break
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+
+	if best ~= lockedPart then
+		lockedPart, lockedAt = best, now
+	end
+	return best
+end
+
+----------------------------------------------------------------
+-- MAIN LOOP
+----------------------------------------------------------------
+local CAMERA_MODE = "rebuild"
+
+local MAX_PITCH      = math.rad(80)
+local MAX_PULL_SPEED = math.rad(720)
+local RESYNC_JUMP    = 1.2
+
+local aYaw, aPitch = 0, 0
+local prevInYaw, prevInPitch = 0, 0
+local prevOutYaw, prevOutPitch = 0, 0
+local score = 0
+local retainsMode = false
+local needResync = true
+local lastCamera, lastSubject = nil, nil
+
+local function wrapAngle(a)
+	return (a + math.pi) % (2 * math.pi) - math.pi
+end
+
+local function len(y, p)
+	return math.sqrt(y * y + p * p)
+end
+
+local function setCamera(camera, cfIn)
+	camera.CFrame = CFrame.new(cfIn.Position) * CFrame.fromOrientation(aPitch, aYaw, 0)
+end
+
+local function setBodyYaw(char, yaw)
+	local root = char and char:FindFirstChild("HumanoidRootPart")
+	local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+	if not root then return end
+	if humanoid then humanoid.AutoRotate = false end
+
+	local pos = root.Position
+	local velocity = root.AssemblyLinearVelocity
+	root.CFrame = CFrame.new(pos) * CFrame.fromOrientation(0, yaw, 0)
+	root.AssemblyLinearVelocity = velocity
+end
+
+LocalPlayer.CharacterAdded:Connect(function(char)
+	needResync = true
+	local humanoid = char:WaitForChild("Humanoid", 5)
+	if humanoid then humanoid.AutoRotate = false end
+end)
+
+if LocalPlayer.Character then
+	local humanoid = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+	if humanoid then humanoid.AutoRotate = false end
+end
+
+RunService:BindToRenderStep("MineBot", Enum.RenderPriority.Last.Value, function(dt)
+	local camera = workspace.CurrentCamera
+	if not camera then return end
+
+	local cfIn = camera.CFrame
+	local inPitch, inYaw = cfIn:ToOrientation()
+
+	if camera ~= lastCamera or camera.CameraSubject ~= lastSubject then
+		needResync = true
+		lastCamera, lastSubject = camera, camera.CameraSubject
+	end
+
+	if needResync then
+		aYaw, aPitch = inYaw, inPitch
+		prevInYaw, prevInPitch = inYaw, inPitch
+		prevOutYaw, prevOutPitch = inYaw, inPitch
+		score = 0
+		needResync = false
+	else
+		local retY = wrapAngle(inYaw - prevOutYaw)
+		local retP = inPitch - prevOutPitch
+		local rebY = wrapAngle(inYaw - prevInYaw)
+		local rebP = inPitch - prevInPitch
+		local retMag, rebMag = len(retY, retP), len(rebY, rebP)
+
+		if CAMERA_MODE == "auto" then
+			local offset = len(wrapAngle(prevOutYaw - prevInYaw), prevOutPitch - prevInPitch)
+			if offset > 0.01 then
+				score = math.clamp(score + (rebMag - retMag), -1, 1)
+			end
+			if score > 0.1 then retainsMode = true
+			elseif score < -0.1 then retainsMode = false end
+		else
+			retainsMode = (CAMERA_MODE == "retain")
+		end
+
+		CamModeName = retainsMode and "retain" or "rebuild"
+
+		local dY, dP, mag = rebY, rebP, rebMag
+		if retainsMode then
+			dY, dP, mag = retY, retP, retMag
+		end
+
+		if mag > RESYNC_JUMP then
+			aYaw, aPitch = inYaw, inPitch
+			score = 0
+		else
+			aYaw += dY
+			aPitch = math.clamp(aPitch + dP, -MAX_PITCH, MAX_PITCH)
+		end
+	end
+
+	if aYaw ~= aYaw or aPitch ~= aPitch then
+		aYaw, aPitch = inYaw, inPitch
+	end
+
+	setCamera(camera, cfIn)
+
+	local char = LocalPlayer.Character
+	local myHumanoid = char and char:FindFirstChildOfClass("Humanoid")
+	local alive = myHumanoid ~= nil and myHumanoid.Health > 0
+
+	if alive then
+		setBodyYaw(char, aYaw)
+	end
+
+	local engaged = alive and Settings.Enabled and (not Settings.MiddleToggle or AimToggled)
+
+	if engaged then
+		local target = getBestTarget(camera)
+		LastTargetName = target and target.Parent and target.Parent.Name or "none"
+
+		if target then
+			local camPos = camera.CFrame.Position
+			if (target.Position - camPos).Magnitude > 0.5 then
+				local gPitch, gYaw = CFrame.lookAt(camPos, target.Position):ToOrientation()
+
+				local blend = (1 - Settings.Smoothness) * Settings.Strength
+				local alpha = 1 - (1 - math.clamp(blend, 0, 1)) ^ (dt * 60)
+
+				local stepY = wrapAngle(gYaw - aYaw) * alpha
+				local stepP = (gPitch - aPitch) * alpha
+
+				local maxStep = MAX_PULL_SPEED * dt
+				local stepMag = len(stepY, stepP)
+				if stepMag > maxStep then
+					local scale = maxStep / stepMag
+					stepY *= scale
+					stepP *= scale
+				end
+
+				aYaw += stepY
+				aPitch = math.clamp(aPitch + stepP, -MAX_PITCH, MAX_PITCH)
+
+				setCamera(camera, cfIn)
+				setBodyYaw(char, aYaw)
+			end
+		end
+	end
+
+	prevInYaw, prevInPitch = inYaw, inPitch
+	prevOutYaw, prevOutPitch = aYaw, aPitch
+end)-- WalkSpeed Spoof Script (Speed 200)
+-- Press G to toggle spoof on/off
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+
+local player = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoid = character:WaitForChild("Humanoid")
+
+local spoofing = false
+local speed = 200
+local originalSpeed = humanoid.WalkSpeed
+
+-- Hook to keep WalkSpeed spoofed
+local connection
+
+local function startSpoof()
+	if spoofing then return end
+	spoofing = true
+	originalSpeed = humanoid.WalkSpeed
+	
+	connection = RunService.Heartbeat:Connect(function()
+		if humanoid and humanoid.Parent then
+			humanoid.WalkSpeed = speed
+		end
+	end)
+end
+
+local function stopSpoof()
+	if not spoofing then return end
+	spoofing = false
+	
+	if connection then
+		connection:Disconnect()
+		connection = nil
+	end
+	
+	if humanoid and humanoid.Parent then
+		humanoid.WalkSpeed = originalSpeed
+	end
+end
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+	if gameProcessed then return end
+	if input.KeyCode == Enum.KeyCode.G then
+		if spoofing then
+			stopSpoof()
+		else
+			startSpoof()
+		end
+	end
+end)
+
+-- Reset on character respawn
+player.CharacterAdded:Connect(function(newChar)
+	character = newChar
+	humanoid = character:WaitForChild("Humanoid")
+	stopSpoof()
+end)
+
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+
+local localPlayer = Players.LocalPlayer
+local trackingVisible = true
+
+-- Helper function to establish the information layout on a character model locally
+local function createTracker(character, targetPlayer)
+	if targetPlayer == localPlayer then return end
+	
+	-- Wait for critical torso elements to stream into the client scene
+	local head = character:WaitForChild("Head", 5)
+	local root = character:WaitForChild("HumanoidRootPart", 5)
+	
+	if not head or not root then return end
+	if head:FindFirstChild("TrackingLabel") then return end -- Prevent duplicates
+
+	-- 1. Create a 2D interface panel linked directly to the target head coordinate
+	local billboardGui = Instance.new("BillboardGui")
+	billboardGui.Name = "TrackingLabel"
+	billboardGui.Size = UDim2.new(0, 200, 0, 50)
+	billboardGui.StudsOffset = Vector3.new(0, 3, 0) 
+	billboardGui.AlwaysOnTop = true 
+	billboardGui.Enabled = trackingVisible -- Match current global visibility filter state
+	billboardGui.Parent = head
+	
+	-- 2. Text styling config
+	local infoLabel = Instance.new("TextLabel")
+	infoLabel.Size = UDim2.new(1, 0, 1, 0)
+	infoLabel.BackgroundTransparency = 1
+	infoLabel.TextSize = 14
+	infoLabel.Font = Enum.Font.SourceSansBold
+	infoLabel.TextColor3 = Color3.fromRGB(255, 0, 0) 
+	infoLabel.TextStrokeTransparency = 0 
+	infoLabel.Parent = billboardGui
+	
+	-- 3. Dynamic distance tracker runner loop
+	task.spawn(function()
+		while character:IsDescendantOf(workspace) and root:IsDescendantOf(workspace) and head:IsDescendantOf(workspace) do
+			if localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart") then
+				local localRoot = localPlayer.Character.HumanoidRootPart
+				-- Calculate current real-time magnitude distance vector
+				local distance = math.floor((root.Position - localRoot.Position).Magnitude)
+				infoLabel.Text = string.format("%s\n[%d studs]", targetPlayer.Name, distance)
+			else
+				infoLabel.Text = targetPlayer.Name
+			end
+			task.wait(0.1) -- Fast updates without rendering lag
+		end
+	end)
+end
+
+-- Safely process a player profile sequence on the client
+local function handlePlayer(player)
+	if player.Character then
+		task.spawn(createTracker, player.Character, player)
+	end
+	player.CharacterAdded:Connect(function(character)
+		createTracker(character, player)
+	end)
+end
+
+-- Initialize loop for players already present in the runtime layout instance
+for _, player in ipairs(Players:GetPlayers()) do
+	handlePlayer(player)
+end
+Players.PlayerAdded:Connect(handlePlayer)
+
+-- FIXED: Absolute Input Handling via the client pipeline
+UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
+	-- Do nothing if you are currently typing a message into the text chat window
+	if gameProcessedEvent then return end
+	
+	if input.KeyCode == Enum.KeyCode.H then
+		trackingVisible = not trackingVisible
+		
+		-- Loop through every character folder inside workspace to toggle display configurations
+		for _, player in ipairs(Players:GetPlayers()) do
+			if player.Character and player.Character:FindFirstChild("Head") then
+				local label = player.Character.Head:FindFirstChild("TrackingLabel")
+				if label and label:IsA("BillboardGui") then
+					label.Enabled = trackingVisible
+				end
+			end
+		end
+	end
+end)
+
+-- Fly Script (Speed 200)
+-- Press F to toggle fly on/off
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+
+local player = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoid = character:WaitForChild("Humanoid")
+local root = character:WaitForChild("HumanoidRootPart")
+
+local flying = false
+local speed = 200
+local bodyVelocity
+local bodyGyro
+
+local function startFly()
+	if flying then return end
+	flying = true
+	
+	bodyVelocity = Instance.new("BodyVelocity")
+	bodyVelocity.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+	bodyVelocity.Velocity = Vector3.new(0, 0, 0)
+	bodyVelocity.Parent = root
+	
+	bodyGyro = Instance.new("BodyGyro")
+	bodyGyro.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
+	bodyGyro.P = 9e4
+	bodyGyro.Parent = root
+	
+	humanoid.PlatformStand = true
+end
+
+local function stopFly()
+	if not flying then return end
+	flying = false
+	
+	if bodyVelocity then bodyVelocity:Destroy() end
+	if bodyGyro then bodyGyro:Destroy() end
+	
+	humanoid.PlatformStand = false
+end
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+	if gameProcessed then return end
+	if input.KeyCode == Enum.KeyCode.F then
+		if flying then
+			stopFly()
+		else
+			startFly()
+		end
+	end
+end)
+
+RunService.RenderStepped:Connect(function()
+	if not flying or not bodyVelocity or not bodyGyro then return end
+	
+	local cam = workspace.CurrentCamera
+	local moveDirection = Vector3.new()
+	
+	if UserInputService:IsKeyDown(Enum.KeyCode.W) then
+		moveDirection = moveDirection + cam.CFrame.LookVector
+	end
+	if UserInputService:IsKeyDown(Enum.KeyCode.S) then
+		moveDirection = moveDirection - cam.CFrame.LookVector
+	end
+	if UserInputService:IsKeyDown(Enum.KeyCode.A) then
+		moveDirection = moveDirection - cam.CFrame.RightVector
+	end
+	if UserInputService:IsKeyDown(Enum.KeyCode.D) then
+		moveDirection = moveDirection + cam.CFrame.RightVector
+	end
+	if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
+		moveDirection = moveDirection + Vector3.new(0, 1, 0)
+	end
+	if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
+		moveDirection = moveDirection - Vector3.new(0, 1, 0)
+	end
+	
+	if moveDirection.Magnitude > 0 then
+		moveDirection = moveDirection.Unit * speed
+	end
+	
+	bodyVelocity.Velocity = moveDirection
+	bodyGyro.CFrame = cam.CFrame
+end)
+
+-- Clean up when character dies/resets
+player.CharacterAdded:Connect(function(newChar)
+	character = newChar
+	humanoid = character:WaitForChild("Humanoid")
+	root = character:WaitForChild("HumanoidRootPart")
+	stopFly()
+end)
